@@ -1,6 +1,6 @@
 **Anthropological Studies of Divination: Spider Divination**
 
-This page presents a simulation (by Michael D. Fischer) of the Mambila system of nggàm 'spider divination'. This allows readers to try out for themselves the principles of interpretation set out below and to see how it can be a practical and useful means of helping one make one's mind up.
+This page presents a simulation (by Michael D. Fischer and David Zeitlyn) of the Mambila system of nggàm 'spider divination'. This allows readers to try out for themselves the principles of interpretation set out below and to see how it can be a practical and useful means of helping one make one's mind up.
 
 All decisions have to be made in a climate of uncertainty. For example, 'What is the best course of treatment for my sick child?' An expert bases their decisions on the results of technical procedures (often called 'tests'). Sometimes these are unambiguous and clear-cut but sometimes they are not and the expert must rely on their experince to interpret the results in a meaningful way. Many people round the world would claim that the techniques they use (such as spider divination) are no different in type from those used by doctors trained in the western tradition. To see where the similarities and differences may lie takes us straight into the complex heart of modern social anthropology. This example raises more issues than it can answer. The reader must read further to help make their own mind up about whether any difference exists, and if so where it lies.
 
