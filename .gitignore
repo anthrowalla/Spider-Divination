@@ -1,0 +1,19 @@
+# Legacy Java files
+SpiderV.jar
+SpiderV.zip
+SpiderV.html
+SpiderVZip.html
+Spider Divination IV (mac)
+
+# Legacy/alternate assets
+gong.au
+spiderbowl2.gif
+NewSpiderBowl_bw.jpg
+NewSpiderBowl_sep.jpg
+
+# Claude Code config
+.claude/
+
+# OS files
+.DS_Store
+Thumbs.db
