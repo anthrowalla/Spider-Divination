@@ -142,10 +142,55 @@ class Card {
         const cos = Math.cos(this.angle * Math.PI / 180);
         const sin = Math.sin(this.angle * Math.PI / 180);
         // Tip is at the "top" of the card in local coordinates (pointing upward when angle = 0)
+        // Card is drawn centered, so tip is at height/2 from center
+        // In canvas, Y increases downward, so "up" is negative Y
         return {
-            x: this.x + this.height * sin,
-            y: this.y + this.height * cos
+            x: this.x + (this.height / 2) * sin,
+            y: this.y - (this.height / 2) * cos
         };
+    }
+
+    /**
+     * Get the pointing line segment from card center through tip, extending 300px
+     * Returns {x1, y1, x2, y2} where (x1,y1) is center and (x2,y2) is extended tip
+     */
+    getPointingLine() {
+        const tip = this.getTipPoint();
+        const dx = tip.x - this.x;
+        const dy = tip.y - this.y;
+        const len = Math.sqrt(dx * dx + dy * dy);
+
+        // Normalize and extend to 300px
+        const extend = 300;
+        const x2 = this.x + (dx / len) * extend;
+        const y2 = this.y + (dy / len) * extend;
+
+        return { x1: this.x, y1: this.y, x2: x2, y2: y2 };
+    }
+
+    /**
+     * Check if a line segment intersects a circle's perimeter (not interior)
+     */
+    lineIntersectsCirclePerimeter(x1, y1, x2, y2, cx, cy, r) {
+        // Calculate the distance from circle center to the line
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const fx = x1 - cx;
+        const fy = y1 - cy;
+
+        const a = dx * dx + dy * dy;
+        const b = 2 * (fx * dx + fy * dy);
+        const c = fx * fx + fy * fy - r * r;
+
+        const discriminant = b * b - 4 * a * c;
+        if (discriminant < 0) return false;
+
+        const sqrtD = Math.sqrt(discriminant);
+        const t1 = (-b - sqrtD) / (2 * a);
+        const t2 = (-b + sqrtD) / (2 * a);
+
+        // Check if the line segment touches or crosses the circle perimeter
+        return (t1 >= 0 && t1 <= 1) || (t2 >= 0 && t2 <= 1);
     }
 
     /**
@@ -162,7 +207,7 @@ class Card {
 
         // Check if card is over stick
         if (this.lineIntersectsPolygon(bowl.stick.x1, bowl.stick.y1,
-                                        bowl.stick.x2, bowl.stick.y2, corners)) {
+                                       bowl.stick.x2, bowl.stick.y2, corners)) {
             this.info |= 1; // over stick
             messages.push('is over stick');
         }
@@ -181,25 +226,55 @@ class Card {
             messages.push('is over hole');
         }
 
-        // Check if card is pointing to stick
-        if (this.pointNearLine(tip.x, tip.y, bowl.stick.x1, bowl.stick.y1,
-                               bowl.stick.x2, bowl.stick.y2, 100)) {
+        // Get the pointing line (from center through tip, extending 300px)
+        const pointingLine = this.getPointingLine();
+
+        // Check if card is pointing to stick (pointing line intersects stick)
+        if (this.lineIntersectsPolygon(pointingLine.x1, pointingLine.y1,
+                                       pointingLine.x2, pointingLine.y2,
+                                       [{x: bowl.stick.x1, y: bowl.stick.y1},
+                                        {x: bowl.stick.x2, y: bowl.stick.y2}])) {
             this.info |= 8; // pointing to stick
             messages.push('is pointing to stick');
         }
 
-        // Check if card is pointing to stone
-        if (this.pointNearCircle(tip.x, tip.y, bowl.stone.x, bowl.stone.y,
-                                  bowl.stone.radius + 95)) {
+        // Check if card is pointing to stone (pointing line intersects stone perimeter + 20px)
+        if (this.lineIntersectsCirclePerimeter(pointingLine.x1, pointingLine.y1,
+                                               pointingLine.x2, pointingLine.y2,
+                                               bowl.stone.x, bowl.stone.y,
+                                               bowl.stone.radius + 20)) {
             this.info |= 16; // pointing to stone
             messages.push('is pointing to stone');
         }
 
-        // Check if card is pointing to hole
-        if (this.pointNearCircle(tip.x, tip.y, bowl.hole.x, bowl.hole.y,
-                                  bowl.hole.radius + 95)) {
+        // Check if card is pointing to hole (pointing line intersects hole perimeter + 20px)
+        if (this.lineIntersectsCirclePerimeter(pointingLine.x1, pointingLine.y1,
+                                               pointingLine.x2, pointingLine.y2,
+                                               bowl.hole.x, bowl.hole.y,
+                                               bowl.hole.radius + 20)) {
             this.info |= 32; // pointing to hole
             messages.push('is pointing to hole');
+        }
+
+        // Check if card is near stick
+        if (this.polygonNearLineButNotIntersecting(corners, bowl.stick.x1, bowl.stick.y1,
+                                                    bowl.stick.x2, bowl.stick.y2, 20)) {
+            this.info |= 64; // near stick
+            messages.push('is near the stick');
+        }
+
+        // Check if card is near stone
+        if (this.polygonNearCircleButNotIntersecting(corners, bowl.stone.x, bowl.stone.y,
+                                                      bowl.stone.radius, 20)) {
+            this.info |= 128; // near stone
+            messages.push('is near the stone');
+        }
+
+        // Check if card is near hole
+        if (this.polygonNearCircleButNotIntersecting(corners, bowl.hole.x, bowl.hole.y,
+                                                     bowl.hole.radius, 20)) {
+            this.info |= 256; // near hole
+            messages.push('is near the hole');
         }
 
         this.message = messages.join(' ');
@@ -303,6 +378,46 @@ class Card {
     }
 
     /**
+     * Check if polygon is near a circle but not intersecting it
+     * Near means any vertex is within threshold of the circle's edge
+     */
+    polygonNearCircleButNotIntersecting(polygon, cx, cy, r, threshold) {
+        // If intersecting, return false
+        if (this.circleIntersectsPolygon(cx, cy, r, polygon)) {
+            return false;
+        }
+
+        // Check if any vertex is within threshold of the circle's edge
+        for (const vertex of polygon) {
+            const distToCenter = this.distance(vertex.x, vertex.y, cx, cy);
+            const distToEdge = Math.abs(distToCenter - r);
+            if (distToEdge <= threshold) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Check if polygon is near a line segment but not intersecting it
+     * Near means any vertex is within threshold of the line
+     */
+    polygonNearLineButNotIntersecting(polygon, x1, y1, x2, y2, threshold) {
+        // If intersecting, return false
+        if (this.lineIntersectsPolygon(x1, y1, x2, y2, polygon)) {
+            return false;
+        }
+
+        // Check if any vertex is within threshold of the line
+        for (const vertex of polygon) {
+            if (this.pointNearLine(vertex.x, vertex.y, x1, y1, x2, y2, threshold)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Calculate distance between two points
      */
     distance(x1, y1, x2, y2) {
@@ -331,6 +446,20 @@ class Card {
         }
 
         ctx.restore();
+
+        // Draw pointing line for diagnostic purposes (when hovered or selected)
+        if (isSelected || isHovered) {
+            const line = this.getPointingLine();
+            ctx.save();
+            ctx.strokeStyle = '#ff0000'; // Red line for visibility
+            ctx.lineWidth = 1;
+            ctx.setLineDash([5, 5]); // Dashed line
+            ctx.beginPath();
+            ctx.moveTo(line.x1, line.y1);
+            ctx.lineTo(line.x2, line.y2);
+            ctx.stroke();
+            ctx.restore();
+        }
     }
 }
 
@@ -367,7 +496,9 @@ async function init() {
         hoverPreview: document.getElementById('hoverPreview'),
         hoverImage: document.getElementById('hoverImage'),
         hoverCaption: document.getElementById('hoverCaption'),
-        hoverStatus: document.getElementById('hoverStatus')
+        hoverStatus: document.getElementById('hoverStatus'),
+        // Documentation iframe
+        docIframe: document.querySelector('.documentation iframe')
     };
 
     // Set up event listeners
@@ -381,6 +512,9 @@ async function init() {
 
     // Set initial button states
     setButtonState('start');
+
+    // Adjust iframe height on load
+    adjustIframeHeight();
 
     elements.statusText.textContent = 'Ready - Click "Start" to begin';
 }
@@ -412,6 +546,24 @@ function setButtonState(phase) {
             elements.showBtn.disabled = true;     // Show button disabled
             break;
     }
+}
+
+/**
+ * Adjust iframe height based on window height
+ */
+function adjustIframeHeight() {
+    if (!elements.docIframe) return;
+
+    const windowHeight = window.innerHeight;
+    const appContainer = document.querySelector('.app-container');
+    const iframeContainer = document.querySelector('.documentation');
+
+    // Calculate available height for iframe
+    // Subtract approximate height of other elements (controls, bowl, info panel, status bar)
+    const otherElementsHeight = 650; // Approximate height of other UI elements
+    const availableHeight = Math.max(360, windowHeight - otherElementsHeight);
+
+    elements.docIframe.style.height = availableHeight + 'px';
 }
 
 /**
@@ -453,6 +605,10 @@ function setupEventListeners() {
             elements.cardModal.classList.remove('visible');
         }
     });
+
+    // Window resize - adjust iframe height
+    window.addEventListener('resize', adjustIframeHeight);
+    adjustIframeHeight(); // Initial adjustment
 }
 
 /**

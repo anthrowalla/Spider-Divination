@@ -230,6 +230,24 @@
         .loading-indicator {
             color: #ffcc00;
         }
+
+        /* Documentation iframe */
+        .documentation {
+            margin-top: 10px;
+        }
+
+        .documentation iframe {
+            width: 100%;
+            height: 100%;
+            min-height: 360px;
+            border: 2px solid #654321;
+        }
+
+        /* Make app container fit within viewport */
+        .app-container {
+            max-height: 100vh;
+            overflow-y: auto;
+        }
     </style>
 </head>
 <body>
@@ -281,7 +299,7 @@
         </div>
 
 <div class="documentation">
-	<iframe src="spiderdoc.html" title="Spider Documentation" width="800" height="600"></iframe>
+	<iframe src="spiderdoc.html" title="Spider Documentation"></iframe>
 </div>
     </div>
 
