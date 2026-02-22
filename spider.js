@@ -53,14 +53,17 @@ const state = {
     largeCardImages: {},
     backgroundImage: null,
     coverImage: null,      // cover.gif - lid that covers the bowl
+    leafStackImage: null,  // leafstack.gif - stack of leaves shown in empty bowl
     gongSound: null,       // gong.mp3 - sound played on reset
     showCover: false,      // whether to show the cover over the bowl (starts uncovered)
+    showLeafStack: true,   // whether to show the leaf stack in the bowl
     isPlaying: false,
     isPaused: false,
     lotteryMode: false,
     sessionLog: [],
     sessionStartTime: null,
     usedCards: new Set(),
+    reservedCardIds: [],   // card IDs placed by handleReset, to be included in generateTableau
     imagesLoaded: 0,
     totalImages: 0
 };
@@ -180,21 +183,21 @@ class Card {
 
         // Check if card is pointing to stick
         if (this.pointNearLine(tip.x, tip.y, bowl.stick.x1, bowl.stick.y1,
-                               bowl.stick.x2, bowl.stick.y2, 20)) {
+                               bowl.stick.x2, bowl.stick.y2, 100)) {
             this.info |= 8; // pointing to stick
             messages.push('is pointing to stick');
         }
 
         // Check if card is pointing to stone
         if (this.pointNearCircle(tip.x, tip.y, bowl.stone.x, bowl.stone.y,
-                                  bowl.stone.radius + 15)) {
+                                  bowl.stone.radius + 95)) {
             this.info |= 16; // pointing to stone
             messages.push('is pointing to stone');
         }
 
         // Check if card is pointing to hole
         if (this.pointNearCircle(tip.x, tip.y, bowl.hole.x, bowl.hole.y,
-                                  bowl.hole.radius + 15)) {
+                                  bowl.hole.radius + 95)) {
             this.info |= 32; // pointing to hole
             messages.push('is pointing to hole');
         }
@@ -359,7 +362,12 @@ async function init() {
         closeModal: document.getElementById('closeModal'),
         // Checkboxes
         lotteryMode: document.getElementById('lotteryMode'),
-        playDelay: document.getElementById('playDelay')
+        playDelay: document.getElementById('playDelay'),
+        // Hover preview
+        hoverPreview: document.getElementById('hoverPreview'),
+        hoverImage: document.getElementById('hoverImage'),
+        hoverCaption: document.getElementById('hoverCaption'),
+        hoverStatus: document.getElementById('hoverStatus')
     };
 
     // Set up event listeners
@@ -371,7 +379,39 @@ async function init() {
     // Initial render
     render();
 
-    elements.statusText.textContent = 'Ready - Click "Spider" to generate a tableau';
+    // Set initial button states
+    setButtonState('start');
+
+    elements.statusText.textContent = 'Ready - Click "Start" to begin';
+}
+
+/**
+ * Set button states based on workflow phase
+ * @param {string} phase - 'start', 'spider', 'show', or 'reset'
+ */
+function setButtonState(phase) {
+    switch (phase) {
+        case 'start':
+            elements.resetBtn.disabled = false;   // Start button enabled
+            elements.spiderBtn.disabled = true;   // Spider button disabled
+            elements.showBtn.disabled = true;     // Show button disabled
+            break;
+        case 'spider':
+            elements.resetBtn.disabled = true;    // Start button disabled
+            elements.spiderBtn.disabled = false;  // Spider button enabled
+            elements.showBtn.disabled = true;     // Show button disabled
+            break;
+        case 'show':
+            elements.resetBtn.disabled = true;    // Start button disabled
+            elements.spiderBtn.disabled = true;   // Spider button disabled
+            elements.showBtn.disabled = false;    // Show button enabled
+            break;
+        case 'reset':
+            elements.resetBtn.disabled = false;   // Start button enabled
+            elements.spiderBtn.disabled = true;   // Spider button disabled
+            elements.showBtn.disabled = true;     // Show button disabled
+            break;
+    }
 }
 
 /**
@@ -381,6 +421,11 @@ function setupEventListeners() {
     // Canvas events
     canvas.addEventListener('mousemove', handleMouseMove);
     canvas.addEventListener('click', handleClick);
+    canvas.addEventListener('mouseleave', () => {
+        state.hoveredCard = null;
+        elements.hoverPreview.classList.remove('visible');
+        render();
+    });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
     // Button events
@@ -432,6 +477,13 @@ async function loadResources() {
         console.warn('Failed to load cover image');
     });
 
+    // Load leaf stack image (shown in empty bowl)
+    const leafStackPromise = loadImage(`${CONFIG.BASE_URL}MedGifs/leafstack.gif`).then(img => {
+        state.leafStackImage = img;
+    }).catch(() => {
+        console.warn('Failed to load leaf stack image');
+    });
+
     // Load gong sound
     state.gongSound = new Audio(`${CONFIG.BASE_URL}gong.mp3`);
     state.gongSound.preload = 'auto';
@@ -471,9 +523,10 @@ async function loadResources() {
         captionPromises.push(promise);
     }
 
-    // Wait for essential resources (background, cover, and medium cards)
+    // Wait for essential resources (background, cover, leafstack, and medium cards)
     await bgPromise;
     await coverPromise;
+    await leafStackPromise;
     await Promise.all(medPromises);
     await Promise.all(captionPromises);
 
@@ -546,6 +599,21 @@ function handleMouseMove(e) {
     if (foundCard !== state.hoveredCard) {
         state.hoveredCard = foundCard;
         render();
+
+        // Update hover preview
+        if (foundCard) {
+            const caption = state.captions[foundCard.imageId] || { title: `Leaf ${foundCard.imageId}`, description: '' };
+            const lgImg = state.largeCardImages[foundCard.imageId];
+
+            if (lgImg && lgImg.complete) {
+                elements.hoverImage.src = lgImg.src;
+            }
+            elements.hoverCaption.textContent = caption.title + (caption.description ? ': ' + caption.description : '');
+            elements.hoverStatus.textContent = foundCard.message || 'No special position';
+            elements.hoverPreview.classList.add('visible');
+        } else {
+            elements.hoverPreview.classList.remove('visible');
+        }
     }
 
     // Check for bowl element hover
@@ -625,10 +693,55 @@ function handleReset() {
     state.tableau = [];
     state.selectedCard = null;
     state.hoveredCard = null;
+    state.reservedCardIds = [];  // Clear reserved card IDs
+    state.showCover = false;     // Hide the cover, show the bowl with leaf stack
+    state.showLeafStack = true;  // Show the leaf stack
+
+    // Place 2 random leaves overlapping the hole
+    const bowl = CONFIG.BOWL;
+    const hole = bowl.hole;
+
+    // Generate 2 random unique card IDs
+    const cardId1 = Math.floor(Math.random() * CONFIG.TOTAL_CARDS) + 1;
+    let cardId2 = Math.floor(Math.random() * CONFIG.TOTAL_CARDS) + 1;
+    while (cardId2 === cardId1) {
+        cardId2 = Math.floor(Math.random() * CONFIG.TOTAL_CARDS) + 1;
+    }
+
+    // Store these IDs so they'll be included in the full tableau later
+    state.reservedCardIds = [cardId1, cardId2];
+
+    // Create the 2 cards positioned over the hole (overlapping)
+    const card1 = new Card(1, cardId1, hole.x - 15, hole.y - 10, Math.random() * 60 - 30);
+    const card2 = new Card(2, cardId2, hole.x + 10, hole.y + 5, Math.random() * 60 - 30);
+
+    card1.interpret();
+    card2.interpret();
+
+    state.tableau.push(card1, card2);
+
+    elements.infoPanel.innerHTML = 'Click on a card to see its interpretation.';
+    updateTableauList();
+    render();
+    elements.statusText.textContent = 'Reset - 2 leaves placed over hole';
+
+    // Enable Spider button, disable Start button
+    setButtonState('spider');
+
+    logEvent('Reset', '');
+}
+
+/**
+ * Handle Spider button - generate new tableau
+ */
+function handleSpider() {
+    state.tableau = [];
+    state.selectedCard = null;
+    state.hoveredCard = null;
     state.usedCards.clear();
     state.sessionLog = [];
     state.sessionStartTime = null;
-    state.showCover = true;  // Show the cover over the bowl
+    state.showCover = true;  // Hide the cover, show the bowl with leaf stack
 
     // Play the gong sound
 /*
@@ -643,18 +756,10 @@ function handleReset() {
     updateTableauList();
     render();
 
-    // Change button label to "Repeat" after first use
-    elements.resetBtn.textContent = 'Repeat';
+    elements.statusText.textContent = 'Spider - Click "Show" to see Spider tableau';
 
-    elements.statusText.textContent = 'Reset - Click "Spider" to generate a new tableau';
-    logEvent('Reset', '');
-}
-
-/**
- * Handle Spider button - generate new tableau
- */
-function handleSpider() {
-    generateTableau();
+    // Enable Show button, disable Spider button
+    setButtonState('show');
 }
 
 /**
@@ -663,7 +768,7 @@ function handleSpider() {
 function generateTableau() {
     const bowl = CONFIG.BOWL;
     // Lottery mode: always 6 cards (for lottery numbers), otherwise 4-7 cards
-    const numCards = state.lotteryMode ? 6 : Math.floor(Math.random() * 4) + 4;
+    const numCards = state.lotteryMode ? 6 : ntableau();
 
     // Play the gong sound
     if (state.gongSound) {
@@ -673,8 +778,9 @@ function generateTableau() {
         });
     }
 
-    // Hide the cover when generating a tableau
+    // Hide the cover and leaf stack when generating a tableau
     state.showCover = false;
+    state.showLeafStack = false;
 
     // Start session if not started
     if (!state.sessionStartTime) {
@@ -683,15 +789,34 @@ function generateTableau() {
         logEvent('Session', `${now.toLocaleDateString()} ${now.toLocaleTimeString()} ${state.sessionStartTime}`);
     }
 
-    // Clear current tableau or add to it
+    // Get reserved card IDs from handleReset (if any)
+    const reservedIds = state.reservedCardIds.slice(); // Copy reserved IDs
+
+    // Clear current tableau
     state.tableau = [];
     state.selectedCard = null;
 
     // Track cards used in this spread to ensure uniqueness
     const usedInThisSpread = new Set();
 
-    // Generate cards
-    for (let i = 0; i < numCards; i++) {
+    // First, add the reserved cards with random positions
+    reservedIds.forEach((id, index) => {
+        const angle = Math.random() * Math.PI * 2;
+        const r = Math.random() * (bowl.radius - 30) + 20;
+        const x = bowl.centerX + r * Math.cos(angle);
+        const y = bowl.centerY + r * Math.sin(angle);
+        const rotation = Math.floor(Math.random() * 360);
+
+        const card = new Card(index + 1, id, x, y, rotation);
+        card.interpret();
+        state.tableau.push(card);
+        usedInThisSpread.add(id);
+    });
+
+    // Then fill the rest with random cards
+    const cardsToAdd = numCards - state.tableau.length;
+
+    for (let i = 0; i < cardsToAdd; i++) {
         let imageId;
 
         if (state.lotteryMode) {
@@ -734,10 +859,13 @@ function generateTableau() {
         // Random rotation (full 360 degrees)
         const rotation = Math.floor(Math.random() * 360);
 
-        const card = new Card(i + 1, imageId, x, y, rotation);
+        const card = new Card(state.tableau.length + 1, imageId, x, y, rotation);
         card.interpret();
         state.tableau.push(card);
     }
+
+    // Clear reserved cards since they're now part of the full tableau
+    state.reservedCardIds = [];
 
     // Log tableau
     logEvent('Tableau', `${state.tableau.length} ${state.tableau.length}`);
@@ -755,13 +883,17 @@ function generateTableau() {
  * Handle Show button - show selected card in modal
  */
 function handleShow() {
+	generateTableau();
+
     if (!state.selectedCard) {
         elements.statusText.textContent = 'Select a card first';
-        return;
+    } else {
+        showCardModal(state.selectedCard);
+        logEvent('Show', '');
     }
 
-    showCardModal(state.selectedCard);
-    logEvent('Show', '');
+    // Enable Start button, disable Show button
+    setButtonState('start');
 }
 
 /**
@@ -884,6 +1016,11 @@ function render() {
     if (state.showCover && state.coverImage && state.coverImage.complete) {
         drawCover();
     } else {
+        // Draw leaf stack when showLeafStack is true
+        if (state.showLeafStack && state.leafStackImage && state.leafStackImage.complete) {
+            drawLeafStack();
+        }
+
         // Draw bowl element highlights if hovered (only when cover is not shown)
         if (state.hoveredElement) {
             drawElementHighlight(state.hoveredElement);
@@ -910,6 +1047,39 @@ function drawCover() {
     const y = bowl.centerY - (diameter / 2) - 20;  // 20px up
 
     ctx.drawImage(img, x, y, diameter, diameter);
+}
+
+/**
+ * Draw the leaf stack image at the bottom of the bowl
+ */
+function drawLeafStack() {
+    const bowl = CONFIG.BOWL;
+    const img = state.leafStackImage;
+
+    // Draw the leaf stack near the bottom of the bowl
+    // Position it at the bottom center of the bowl area, then move diagonally -45 degrees
+    const width = 80;  // approximate width for the leaf stack
+    const height = 60; // approximate height for the leaf stack
+    const offset = 70; // diagonal offset in pixels
+    const offsetX = -offset * Math.cos(45 * Math.PI / 180); // -45 deg: move left
+    const offsetY = -offset * Math.sin(45 * Math.PI / 180); // -45 deg: move up
+    const x = bowl.centerX + offsetX;
+    const y = bowl.centerY + bowl.radius - 10 + offsetY; // Near bottom of bowl, 10px from edge
+
+    // Save the current context state
+    ctx.save();
+
+    // Move to the position where we want to draw
+    ctx.translate(x, y);
+
+    // Rotate 45 degrees to the right (clockwise)
+    ctx.rotate(45 * Math.PI / 180);
+
+    // Draw the image centered on the translated point
+    ctx.drawImage(img, -width / 2, -height / 2, width, height);
+
+    // Restore the context state
+    ctx.restore();
 }
 
 /**
@@ -993,6 +1163,41 @@ function logEvent(type, data) {
 // Utility functions
 function distance(x1, y1, x2, y2) {
     return Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
+}
+
+/**
+ * ntableau - Weighted random tableau size selector
+ * Returns a random tableau size based on weighted probability distribution:
+ * - 10% chance: 2 cards
+ * - 60% chance: 4 cards
+ * - 15% chance: 5 cards
+ * - 10% chance: 6 cards
+ * - 5% chance: 7 cards
+ * @returns {number} The tableau size (2, 4, 5, 6, or 7)
+ */
+function ntableau() {
+    // 2D array: [cumulative_probability, tableau_size]
+    const distribution = [
+        [0.1, 2],
+        [0.25, 3],
+        [0.75, 4],
+        [0.9, 5],
+        [0.97, 6],
+        [1.0, 7]
+    ];
+
+    // Generate random value between 0 and 1
+    const rand = Math.random();
+
+    // Find first element where cumulative probability >= random value
+    for (let i = 0; i < distribution.length; i++) {
+        if (rand <= distribution[i][0]) {
+            return distribution[i][1];
+        }
+    }
+
+    // Fallback (should never reach here since last value is 1.0)
+    return 7;
 }
 
 function pointNearLine(px, py, x1, y1, x2, y2, threshold) {

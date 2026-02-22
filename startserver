@@ -1,0 +1,8 @@
+PORT="$1"
+if test -z "$PORT"
+then
+PORT=8050
+fi
+python -m http.server $PORT &
+echo access http://localhost:8050
+
